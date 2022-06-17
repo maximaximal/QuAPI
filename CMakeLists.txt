@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.9.4)
 project(quapi)
 
+if(NOT ${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
+    message(FATAL_ERROR "Currently, QuAPI only supports Linux! In the future, The BSDs (FreeBSD, etc) and MacOS may be supported. Windows has too little support for preloading libraries reliably. This system is ${CMAKE_SYSTEM_NAME}")
+endif()
+
 include(GenerateExportHeader)
 
 set(CMAKE_MODULE_PATH
@@ -8,13 +12,14 @@ set(CMAKE_MODULE_PATH
     ${CMAKE_MODULE_PATH})
 
 # Required PCRE2 Library for SAT and UNSAT matching
-find_package(PCRE2 REQUIRED)
+find_package(PCRE2)
 
 set(CMAKE_CXX_VISIBILITY_PRESET hidden)
 set(CMAKE_C_VISIBILITY_PRESET hidden)
 set(CMAKE_VISIBILITY_INLINES_HIDDEN 1)
 
 option(DEBUG_ENABLE_ADDRESS_SANITIZER "enable address sanitizer" OFF)
+option(ENABLE_ZEROCOPY "enable \"zerocopy\" using vmsplice, splice, memfd, and mmap for pipe communication" OFF)
 
 set(LIBASAN_PATH "")
 

@@ -29,6 +29,8 @@
 #undef fgetc_unlocked
 #endif
 
+// ZLib interfacing types
+
 int
 __uflow(FILE* file);
 
@@ -42,15 +44,55 @@ static bool quapi_entry_getc = false;
 static bool quapi_entry_getc_unlocked = false;
 static bool quapi_entry_read = false;
 static bool quapi_entry_fread = false;
+static bool quapi_entry_gzread = false;
+static bool quapi_entry_gzdopen = false;
+static bool quapi_entry_gzclose = false;
 static bool quapi_entry___uflow = false;
+
+extern bool quapi_runtime_read_detected;
 
 #define xstr(a) str(a)
 #define str(a) #a
 #define QUAPI_CHECK_AND_REPORT_ENTRY(F)               \
   if(!quapi_entry_##F) {                              \
     quapi_entry_##F = true;                           \
+    quapi_runtime_read_detected = true;               \
     dbg("Entered preloaded runtime through " str(F)); \
   }
+
+static struct gzFile_s* quapi_gzFile_stdin = NULL;
+QUAPI_PRELOAD_EXPORT
+struct gzFile_s*
+gzdopen(int fd, const char* mode) {
+  QUAPI_CHECK_AND_REPORT_ENTRY(gzdopen)
+  if(fd == STDIN_FILENO) {
+    quapi_gzFile_stdin = (struct gzFile_s*)1;
+    return quapi_gzFile_stdin;
+  }
+  return global_runtime.gzdopen(fd, mode);
+}
+
+QUAPI_PRELOAD_EXPORT
+int
+gzread(struct gzFile_s* f, char* data, unsigned int size) {
+  QUAPI_CHECK_AND_REPORT_ENTRY(gzread)
+  if(f == quapi_gzFile_stdin) {
+    return quapi_read(&global_runtime, data, size);
+  } else {
+    return global_runtime.gzread(f, data, size);
+  }
+}
+
+QUAPI_PRELOAD_EXPORT
+int
+gzclose(struct gzFile_s* f) {
+  QUAPI_CHECK_AND_REPORT_ENTRY(gzclose)
+  if(f == quapi_gzFile_stdin) {
+    return 0;
+  } else {
+    return global_runtime.gzclose(f);
+  }
+}
 
 QUAPI_PRELOAD_EXPORT int
 fgetc(FILE* stream) {

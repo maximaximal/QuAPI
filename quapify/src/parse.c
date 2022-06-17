@@ -340,7 +340,7 @@ parse_dimacs(strictness strict,
     if(block_exists || block_forall) {
       if(lit != 0) {
         int q = ABS(lit);
-        if(block_exists)
+        if(block_forall)
           q = -q;
         add_quantifier(q);
       } else {

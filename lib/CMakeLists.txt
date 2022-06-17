@@ -12,7 +12,11 @@ target_include_directories(quapi PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../common/in
 
 target_link_libraries(quapi PUBLIC quapi_common)
 
-target_link_libraries(quapi PRIVATE PCRE2::pcre2)
+if(PCRE2::pcre2)
+  target_link_libraries(quapi PRIVATE PCRE2::pcre2)
+else()
+  target_compile_definitions(quapi PUBLIC WITHOUT_PCRE2)
+endif()
 
 if(NOT ${LIBASAN_PATH} STREQUAL "")
     target_compile_definitions(quapi PRIVATE LIBASAN_PATH="${LIBASAN_PATH}")

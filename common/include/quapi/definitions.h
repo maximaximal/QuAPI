@@ -30,7 +30,7 @@ extern "C" {
 /// The API version may increase with time and is sent with the header message.
 /// The runtime then may switch to other processing strategies if older API
 /// versions were received.
-#define QUAPI_API_VERSION 1
+#define QUAPI_API_VERSION 2
 
 typedef enum quapi_state {
   QUAPI_INPUT,
@@ -118,12 +118,21 @@ dbg(const char* format, ...);
 void
 err(const char* format, ...);
 
+struct gzFile_s {
+  unsigned have;
+  unsigned char* next;
+  int64_t pos;
+};
+
 typedef ssize_t (*read_t)(int, void*, size_t);
 typedef ssize_t (*fread_t)(void*, size_t, size_t, FILE*);
 typedef int (*getc_t)(FILE*);
 typedef int (*fgetc_t)(FILE*);
 typedef int (*getc_unlocked_t)(FILE*);
 typedef int (*fgetc_unlocked_t)(FILE*);
+typedef struct gzFile_s* (*gzdopen_t)(int fd, const char* mode);
+typedef int (*gzread_t)(struct gzFile_s*, char* buf, unsigned int len);
+typedef int (*gzclose_t)(struct gzFile_s*);
 
 #ifdef __cplusplus
 }

@@ -81,6 +81,24 @@ quapi_status_str(quapi_status status) {
   return "UNKNOWN_STATUS";
 }
 
+bool
+quapi_msg_is_known(quapi_msg_type t) {
+  switch(t) {
+    case QUAPI_MSG_UNDEFINED:
+    case QUAPI_MSG_HEADER:
+    case QUAPI_MSG_QUANTIFIER:
+    case QUAPI_MSG_LITERAL:
+    case QUAPI_MSG_SOLVE:
+    case QUAPI_MSG_FORK:
+    case QUAPI_MSG_FORK_REPORT:
+    case QUAPI_MSG_STARTED:
+    case QUAPI_MSG_EXIT_CODE:
+    case QUAPI_MSG_DESTRUCTED:
+      return true;
+  }
+  return false;
+}
+
 const char*
 quapi_msg_type_str(quapi_msg_type t) {
   switch(t) {
@@ -98,6 +116,8 @@ quapi_msg_type_str(quapi_msg_type t) {
       return "FORK";
     case QUAPI_MSG_FORK_REPORT:
       return "FORK REPORT";
+    case QUAPI_MSG_STARTED:
+      return "STARTED";
     case QUAPI_MSG_EXIT_CODE:
       return "EXIT CODE";
     case QUAPI_MSG_DESTRUCTED:
@@ -166,12 +186,6 @@ err(const char* format, ...) {
   funlockfile(stderr);
 }
 
-inline static void
-msg_to_arr(quapi_msg* src, char tgt[]) {
-  memcpy(tgt, src->arr, sizeof(quapi_msg_data));
-  tgt[sizeof(quapi_msg_data)] = src->msg.type;
-}
-
 #define READ_VAR(X) X = *((typeof(X)*)(trail + i)), i += sizeof(typeof(X))
 #define WRITE_VAR(X) *(typeof(X)*)&data[i] = X, i += sizeof(typeof(X))
 
@@ -184,7 +198,6 @@ serialize_header(quapi_msg* msg,
                  char** dataptr,
                  size_t* len,
                  quapi_msg_header_data* hdata) {
-  quapi_msg_header* header = &msg->msg.data.header;
   int32_t litcount = hdata->literals;
   int32_t clausecount = hdata->clauses;
   int32_t prefixdepth = hdata->prefixdepth;
@@ -196,7 +209,8 @@ serialize_header(quapi_msg* msg,
 
   size_t i = 0;
 
-  msg_to_arr(msg, data);
+  memcpy(data, msg, sizeof(quapi_msg_data));
+  data[sizeof(quapi_msg_data)] = msg->msg.type;
   i += sizeof(msg->arr);
 
   WRITE_VAR(litcount);
@@ -220,25 +234,26 @@ quapi_write_msg_to_fd(int fd, quapi_msg* msg, quapi_msg_header_data* hdata) {
   assert(msg);
 
   size_t len = sizeof(msg->arr);
-  char data_stack[len];
+  char* data_stack = (char*)msg;
   char* data = data_stack;
+  quapi_msg_type type = msg->msg.type;
 
-  if(msg->msg.type == QUAPI_MSG_HEADER) {
+  if(type == QUAPI_MSG_HEADER) {
     assert(hdata);
     quapi_status s = serialize_header(msg, &data, &len, hdata);
     if(s != QUAPI_OK)
       return s;
   } else {
-    msg_to_arr(msg, data_stack);
+    data[sizeof(quapi_msg_data)] = type;
   }
 
   trc("Write message with len %zu of type %s to fd %d",
       len,
-      quapi_msg_type_str(msg->msg.type),
+      quapi_msg_type_str(type),
       fd);
   ssize_t r = write(fd, data, len);
 
-  if(msg->msg.type == QUAPI_MSG_HEADER && data != msg->arr) {
+  if(type == QUAPI_MSG_HEADER && data != msg->arr) {
     free(data);
   }
 
@@ -256,48 +271,62 @@ quapi_write_msg_to_fd(int fd, quapi_msg* msg, quapi_msg_header_data* hdata) {
 }
 
 quapi_status
-quapi_write_msg_to_file(FILE* f, quapi_msg* msg, quapi_msg_header_data* hdata) {
+quapi_write_msg_to_file(ZEROCOPY_PIPE_OR_FILE* f,
+                        quapi_msg* msg,
+                        quapi_msg_header_data* hdata) {
   assert(msg);
 
   size_t len = sizeof(msg->arr);
-  char data_stack[len];
-  char* data = data_stack;
+  char* data = (char*)msg;
+  quapi_msg_type type = msg->msg.type;
 
-  if(msg->msg.type == QUAPI_MSG_HEADER) {
+  if(type == QUAPI_MSG_HEADER) {
     assert(hdata);
     quapi_status s = serialize_header(msg, &data, &len, hdata);
     if(s != QUAPI_OK)
       return s;
   } else {
-    msg_to_arr(msg, data_stack);
+    data[sizeof(quapi_msg_data)] = type;
   }
 
+#ifdef USING_ZEROCOPY
+  trc("Write message with len %zu of type %s to zerocopy pipe",
+      len,
+      quapi_msg_type_str(type));
+  ssize_t r = quapi_zerocopy_pipe_write(data, len, 1, f);
+#else
   trc("Write message with len %zu of type %s to fd %d via FILE",
       len,
       quapi_msg_type_str(msg->msg.type),
       fileno(f));
-
   ssize_t r = fwrite(data, len, 1, f);
+#endif
 
-  if(msg->msg.type == QUAPI_MSG_HEADER && data != msg->arr) {
+  if(type == QUAPI_MSG_HEADER && data != msg->arr) {
     free(data);
   }
 
   if(r == 1) {
-    switch(msg->msg.type) {
+    switch(type) {
       case QUAPI_MSG_HEADER:
       case QUAPI_MSG_FORK:
       case QUAPI_MSG_SOLVE:
+      case QUAPI_MSG_STARTED:
+#ifdef USING_ZEROCOPY
+        dbg("Flushing");
+        quapi_zerocopy_pipe_flush(f);
+        dbg("Flushed");
+#else
         fflush(f);
+#endif
         break;
       default:
         break;
     }
     return QUAPI_OK;
   } else if(r == -1) {
-    err("Could not write message of type %s to fd %d! Error: %s",
-        quapi_msg_type_str(msg->msg.type),
-        fileno(f),
+    err("Could not write message of type %s! Error: %s",
+        quapi_msg_type_str(type),
         strerror(errno));
     return QUAPI_WRITE_ERROR;
   }
@@ -309,16 +338,26 @@ static void
 read_trailing_into_header(quapi_msg* msg,
                           quapi_msg_header_data* hdata,
                           read_t read,
-                          fread_t fread,
-                          FILE* f) {
-  quapi_msg_header* h = &msg->msg.data.header;
+                          fread_t fread_func,
+                          ZEROCOPY_PIPE_OR_FILE* f) {
   const size_t len = sizeof(int32_t) * 3 + sizeof(int) * 6;
-  char trail[len];
 
+#ifdef USING_ZEROCOPY
+  char trail_backing[len];
+  char* trail = trail_backing;
+  if(read) {
+    read(STDIN_FILENO, trail, len);
+  } else if(fread_func) {
+    trail = quapi_zerocopy_pipe_read(len, f);
+  }
+#else
+  char trail[len];
   if(read)
     read(STDIN_FILENO, trail, len);
-  else if(fread)
-    fread(trail, len, 1, f);
+  else if(fread_func) {
+    fread_func(trail, len, 1, f);
+  }
+#endif
 
   size_t i = 0;
 
@@ -371,16 +410,31 @@ quapi_read_msg_from_fd(int fd,
   return true;
 }
 
+#ifdef USING_ZEROCOPY
+quapi_msg*
+quapi_read_msg_from_file(ZEROCOPY_PIPE_OR_FILE* f,
+                         quapi_msg_header_data* hdata,
+                         fread_t fread) {
+#else
 bool
-quapi_read_msg_from_file(FILE* f,
+quapi_read_msg_from_file(ZEROCOPY_PIPE_OR_FILE* f,
                          quapi_msg* msg,
                          quapi_msg_header_data* hdata,
                          fread_t fread) {
-  assert(f);
   assert(msg);
+#endif
+  assert(f);
   assert(fread);
 
-  ssize_t s = fread(msg->arr, sizeof(msg->arr), 1, f);
+#ifdef USING_ZEROCOPY
+  ssize_t s = 1;
+  quapi_msg* r = quapi_zerocopy_pipe_read(
+    sizeof(quapi_msg_data) + sizeof(quapi_msg_type_packed), f);
+  if(!r)
+    return NULL;
+#else
+  quapi_msg* r = msg;
+  ssize_t s = fread(r, sizeof(msg->arr), 1, f);
   if(s != 1) {
     if(ferror(f)) {
       err("Could not read a message from fd %d via file! Error: %s",
@@ -392,27 +446,37 @@ quapi_read_msg_from_file(FILE* f,
       return false;
     }
   }
+#endif
 
-  quapi_msg_type t = msg->arr[sizeof(quapi_msg_data)];
-  msg->msg.type = t;
+  quapi_msg_type t = r->arr[sizeof(quapi_msg_data)];
+
+  if(!quapi_msg_is_known(t)) {
+    err("Received unknown message type! Read %d bytes",
+        s * (sizeof(quapi_msg_data) + sizeof(quapi_msg_type_packed)));
+    exit(-1);
+  }
 
   trc("Read message of type %s (read %d bytes)",
-      quapi_msg_type_str(msg->msg.type),
+      quapi_msg_type_str(r->msg.type),
       s * (sizeof(quapi_msg_data) + sizeof(quapi_msg_type_packed)));
 
-  if(msg->msg.type == QUAPI_MSG_HEADER) {
-    read_trailing_into_header(msg, hdata, NULL, fread, f);
+  if(r->msg.type == QUAPI_MSG_HEADER) {
+    read_trailing_into_header(r, hdata, NULL, fread, f);
 
     trc("Read header message! Literals: %d, Clauses: %d",
         hdata->literals,
         hdata->clauses);
   }
 
+#ifdef USING_ZEROCOPY
+  return r;
+#else
   return true;
+#endif
 }
 
 // Fix message sizes, so they don't grow unexpectedly.
-static_assert(sizeof(quapi_msg_inner) == 8,
-              "Messages must be exactly 8 bytes wide");
+static_assert(sizeof(quapi_msg_inner) == 5,
+              "Messages must be exactly 5 bytes wide");
 static_assert(sizeof(quapi_msg_data) == 4,
               "Message data be exactly 4 bytes wide");

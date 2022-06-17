@@ -7,6 +7,8 @@
 
 static bool caqe_tests_enabled = true;
 
+#ifndef WITHOUT_PCRE2
+
 TEST_CASE("caqe") {
   const char* spath = "/usr/local/bin/caqe";
   const char* argv[] = { "caqe", NULL };
@@ -115,3 +117,5 @@ TEST_CASE("caqe with alternating prefix") {
   r = quapi_solve(S);
   REQUIRE(r == 20);
 }
+
+#endif

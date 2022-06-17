@@ -7,6 +7,8 @@
 
 static bool cadical_tests_enabled = true;
 
+#ifndef WITHOUT_PCRE2
+
 TEST_CASE("cadical") {
   const char* spath = "/usr/local/bin/cadical";
   const char* argv[] = { "cadical", "--quiet", NULL };
@@ -59,6 +61,10 @@ TEST_CASE("cadical") {
   REQUIRE(r == 10);
 }
 
+#endif
+
+#ifndef WITHOUT_PCRE2
+
 TEST_CASE("cadical with invalid REGEXes") {
   const char* spath = "/usr/local/bin/cadical";
   const char* argv[] = { "cadical", "--quiet", NULL };
@@ -108,6 +114,8 @@ TEST_CASE("cadical with invalid REGEXes") {
   r = quapi_solve(s.get());
   REQUIRE(r == 0);
 }
+
+#endif
 
 TEST_CASE("cadical without regex and just return code") {
   const char* spath = "/usr/local/bin/cadical";

@@ -3,6 +3,7 @@
 
 #include <quapi/definitions.h>
 #include <quapi/message.h>
+#include <quapi/zero-copy-pipes-linux.h>
 
 #include "quapi_preload_export.h"
 
@@ -42,15 +43,19 @@ typedef struct quapi_runtime {
   read_t read;
   fread_t fread;
   fgetc_t fgetc;
-  fgetc_t getc;
-  fgetc_t getc_unlocked;
-  fgetc_t fgetc_unlocked;
+  getc_t getc;
+  getc_unlocked_t getc_unlocked;
+  fgetc_unlocked_t fgetc_unlocked;
+  gzdopen_t gzdopen;
+  gzread_t gzread;
+  gzclose_t gzclose;
 
-  FILE* in_stream;
+  ZEROCOPY_PIPE_OR_FILE* in_stream;
   FILE* default_stdin;
 
   quapi_msg read_msg;
   quapi_msg_header_data header_data;
+  quapi_msg* last_read_msg;
 
   quapi_preload_state_func state;
 

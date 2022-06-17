@@ -110,12 +110,21 @@ int_to_str(int i, char* out, size_t size) {
 
 #define READ_FUNC(NAME)                                   \
   runtime->NAME = (NAME##_t)dlsym(RTLD_NEXT, xstr(NAME)); \
-  dbg("Read function " xstr(NAME) ": %p", runtime->NAME)
+  if(runtime->NAME)                                       \
+    dbg("Successfully read function " xstr(NAME) ": %p", runtime->NAME);
 
 QUAPI_PRELOAD_NO_EXPORT void
 quapi_runtime_init(quapi_runtime* runtime) {
   assert(!runtime->initiated);
   dbg("Initiating...");
+
+#ifdef USING_ZEROCOPY
+  dbg("Zero-Copy active in preloaded runtime! Ensure it is also active in the "
+      "library build.");
+#else
+  dbg("Zero-Copy disabled in preloaded runtime! Ensure it is also disabled in "
+      "the library build.");
+#endif
 
   quapi_timing_construct();
 
@@ -125,10 +134,19 @@ quapi_runtime_init(quapi_runtime* runtime) {
   READ_FUNC(fgetc);
   READ_FUNC(getc_unlocked);
   READ_FUNC(fgetc_unlocked);
+  READ_FUNC(gzdopen);
+  READ_FUNC(gzread);
+  READ_FUNC(gzclose);
 
   runtime->default_stdin = stdin;
   runtime->old_stdout = STDOUT_FILENO;
+#ifdef USING_ZEROCOPY
+  trc("Before pipe fdopen");
+  runtime->in_stream = quapi_zerocopy_pipe_fdopen(STDIN_FILENO, "rb");
+  trc("After pipe fdopen");
+#else
   runtime->in_stream = fdopen(STDIN_FILENO, "rb");
+#endif
   runtime->outbuf = runtime->outbuf_stack;
 
   if(!runtime->in_stream) {
@@ -164,13 +182,21 @@ read_and_print(quapi_runtime* r) {
 
 static quapi_msg*
 read_msg(quapi_runtime* runtime) {
+#ifdef USING_ZEROCOPY
+  assert(runtime->in_stream);
+  runtime->last_read_msg = quapi_read_msg_from_file(
+    runtime->in_stream, &runtime->header_data, runtime->fread);
+  return runtime->last_read_msg;
+#else
   quapi_msg* msg = &runtime->read_msg;
+  runtime->last_read_msg = msg;
 
   if(!quapi_read_msg_from_file(
        runtime->in_stream, msg, &runtime->header_data, runtime->fread))
     return NULL;
 
   return &runtime->read_msg;
+#endif
 }
 
 static int
@@ -253,7 +279,7 @@ advance_state(quapi_runtime* r) {
 
   if(r->repeat_state) {
     r->outbuf_len = 0;
-    r->state = r->state(r, &r->read_msg.msg);
+    r->state = r->state(r, &r->last_read_msg->msg);
     return;
   }
 
@@ -264,12 +290,9 @@ advance_state(quapi_runtime* r) {
     quapi_msg* msg = read_msg(r);
 
     if(!msg) {
-      // Only happens on some exit scenarios if the state machine is not buggy.
-      // Do not spam the log with error messages nobody needs.
-
-      // err("Could not read message, but state machine depends on that! Abort "
-      //     "and exit child process.");
-      exit(-1);
+      // No other messages! Could mean the peer exited.
+      dbg("Exit because peer did not send another message before closing.");
+      exit(EXIT_SUCCESS);
     }
 
     r->outbuf_len = 0;
@@ -281,7 +304,7 @@ advance_state(quapi_runtime* r) {
       quapi_preload_state after = quapi_preload_state_func_to_state(r->state);
 
       if(before != after)
-        dbg("State transition from %s to %s",
+        trc("State transition from %s to %s",
             quapi_preload_state_str(before),
             quapi_preload_state_str(after));
       else
@@ -319,8 +342,8 @@ static void
 sighandler_sigchld(int sig) {}
 
 static void
-fork_solving_child(quapi_runtime* r, quapi_msg_fork* fork_msg) {
-  if(fork_msg->wait_for_exit_code_and_report) {
+fork_solving_child(quapi_runtime* r, quapi_msg_fork fork_msg) {
+  if(fork_msg.wait_for_exit_code_and_report) {
     if(!sighandler_sigchld_initialized) {
       signal(SIGCHLD, &sighandler_sigchld);
       sighandler_sigchld_initialized = true;
@@ -340,7 +363,7 @@ fork_solving_child(quapi_runtime* r, quapi_msg_fork* fork_msg) {
     dbg("Fork successful, new pid of forked solver child: %d",
         r->solver_child_pid);
 
-    if(fork_msg->wait_for_exit_code_and_report) {
+    if(fork_msg.wait_for_exit_code_and_report) {
       signal(SIGCHLD, &sighandler_sigchld);
 
       dbg("Waiting for exit of child to collect exit code.");
@@ -378,7 +401,13 @@ fork_solving_child(quapi_runtime* r, quapi_msg_fork* fork_msg) {
     dup2(r->header_data.forked_child_write_pipe[1], STDOUT_FILENO);
     close(r->header_data.forked_child_read_pipe[1]);
 
+#ifdef USING_ZEROCOPY
+    if(r->in_stream)
+      quapi_zerocopy_pipe_close(r->in_stream);
+    r->in_stream = quapi_zerocopy_pipe_fdopen(STDIN_FILENO, "rb");
+#else
     r->in_stream = fdopen(STDIN_FILENO, "rb");
+#endif
 
     dbg("Forked into solver child and logging this message from there.");
   } else {
@@ -411,6 +440,14 @@ WAITING_FOR_HEADER(quapi_runtime* r, quapi_msg_inner* msg) {
             QUAPI_API_VERSION,
             msg->data.header.api_version);
       }
+
+      // Notify the parent that the child started successfully.
+      quapi_msg started_msg = { .msg.type = QUAPI_MSG_STARTED,
+                                .msg.data.started.api_version =
+                                  QUAPI_API_VERSION };
+      quapi_write_msg_to_fd(
+        r->header_data.message_to_parent_pipe[1], &started_msg, NULL);
+
       return READING_PREFIX;
     default:
       err("Received invalid message type %s in state WAITING_FOR_HEADER",
@@ -453,7 +490,7 @@ READING_PREFIX(quapi_runtime* r, quapi_msg_inner* msg) {
     case QUAPI_MSG_FORK:
       // Read next message first.
       r->outbuf_len = -1;
-      fork_solving_child(r, &msg->data.fork);
+      fork_solving_child(r, msg->data.fork);
       return READING_PREFIX;
     case QUAPI_MSG_SOLVE:
       // Directly continue in READING_MATRIX.
@@ -568,7 +605,7 @@ READING_MATRIX(quapi_runtime* r, quapi_msg_inner* msg) {
       else
         return READING_CLAUSE;
     case QUAPI_MSG_FORK:
-      fork_solving_child(r, &msg->data.fork);
+      fork_solving_child(r, msg->data.fork);
       // Request another message to be read.
       r->outbuf_len = -1;
       return READING_MATRIX;
@@ -596,12 +633,16 @@ READING_MATRIX(quapi_runtime* r, quapi_msg_inner* msg) {
       return WORKING;
     default:
       err("Received message of invalid type %s while READING_MATRIX",
-          msg->type);
+          quapi_msg_type_str(msg->type));
       return READING_MATRIX;
   }
 }
 static void*
 WORKING(quapi_runtime* r, quapi_msg_inner* msg) {
+#ifdef USING_ZEROCOPY
+  quapi_zerocopy_pipe_close(r->in_stream);
+  r->in_stream = NULL;
+#endif
   close(STDIN_FILENO);
   // Close the stream.
   r->outbuf_len = -2;
