@@ -23,7 +23,9 @@
 
 extern bool quapi_runtime_send_destructed_msg;
 
-QUAPI_PRELOAD_NO_EXPORT quapi_runtime global_runtime = { .read = NULL,
+QUAPI_PRELOAD_NO_EXPORT quapi_runtime global_runtime = { .fopen = NULL,
+                                                         .fclose = NULL,
+                                                         .read = NULL,
                                                          .getc = NULL,
                                                          .fgetc = NULL,
                                                          .getc_unlocked = NULL,
@@ -128,6 +130,8 @@ quapi_runtime_init(quapi_runtime* runtime) {
 
   quapi_timing_construct();
 
+  READ_FUNC(fopen);
+  READ_FUNC(fclose);
   READ_FUNC(read);
   READ_FUNC(fread);
   READ_FUNC(getc);

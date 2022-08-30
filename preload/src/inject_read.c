@@ -38,6 +38,8 @@ __uflow(FILE* file);
  * to better integrate with JNI. This could be extracted into it's own injector
  * that may be compiled into QuAPI if JNI is found on the build machine. */
 
+static bool quapi_entry_fopen = false;
+static bool quapi_entry_fclose = false;
 static bool quapi_entry_fgetc = false;
 static bool quapi_entry_fgetc_unlocked = false;
 static bool quapi_entry_getc = false;
@@ -50,6 +52,8 @@ static bool quapi_entry_gzclose = false;
 static bool quapi_entry___uflow = false;
 
 extern bool quapi_runtime_read_detected;
+
+static FILE* quapi_dev_stdin_mock = NULL;
 
 #define xstr(a) str(a)
 #define str(a) #a
@@ -94,9 +98,33 @@ gzclose(struct gzFile_s* f) {
   }
 }
 
+QUAPI_PRELOAD_EXPORT
+FILE*
+fopen(const char* path, const char* mode) {
+  QUAPI_CHECK_AND_REPORT_ENTRY(fopen)
+  if(strcmp(path, "/dev/stdin") == 0 && !quapi_dev_stdin_mock) {
+    FILE* mock = calloc(1, sizeof(FILE));
+    quapi_dev_stdin_mock = mock;
+    return mock;
+  }
+  return global_runtime.fopen(path, mode);
+}
+
+QUAPI_PRELOAD_EXPORT
+int
+fclose(FILE* f) {
+  QUAPI_CHECK_AND_REPORT_ENTRY(fclose)
+  if(f == quapi_dev_stdin_mock) {
+    quapi_dev_stdin_mock = NULL;
+    free(f);
+    return 0;
+  }
+  return global_runtime.fclose(f);
+}
+
 QUAPI_PRELOAD_EXPORT int
 fgetc(FILE* stream) {
-  if(stream == global_runtime.default_stdin) {
+  if(stream == global_runtime.default_stdin || stream == quapi_dev_stdin_mock) {
     QUAPI_CHECK_AND_REPORT_ENTRY(fgetc)
     return (stream)->_IO_read_ptr >= (stream)->_IO_read_end
              ? __uflow(stream)
@@ -109,7 +137,7 @@ fgetc(FILE* stream) {
 
 QUAPI_PRELOAD_EXPORT int
 fgetc_unlocked(FILE* stream) {
-  if(stream == global_runtime.default_stdin) {
+  if(stream == global_runtime.default_stdin || stream == quapi_dev_stdin_mock) {
     QUAPI_CHECK_AND_REPORT_ENTRY(fgetc_unlocked)
     return (stream)->_IO_read_ptr >= (stream)->_IO_read_end
              ? __uflow(stream)
@@ -122,7 +150,7 @@ fgetc_unlocked(FILE* stream) {
 
 QUAPI_PRELOAD_EXPORT int
 getc(FILE* stream) {
-  if(stream == global_runtime.default_stdin) {
+  if(stream == global_runtime.default_stdin || stream == quapi_dev_stdin_mock) {
     QUAPI_CHECK_AND_REPORT_ENTRY(getc)
     return (stream)->_IO_read_ptr >= (stream)->_IO_read_end
              ? __uflow(stream)
@@ -135,7 +163,7 @@ getc(FILE* stream) {
 
 QUAPI_PRELOAD_EXPORT int
 getc_unlocked(FILE* stream) {
-  if(stream == global_runtime.default_stdin) {
+  if(stream == global_runtime.default_stdin || stream == quapi_dev_stdin_mock) {
     QUAPI_CHECK_AND_REPORT_ENTRY(getc_unlocked)
     return (stream)->_IO_read_ptr >= (stream)->_IO_read_end
              ? __uflow(stream)
@@ -161,7 +189,8 @@ QUAPI_PRELOAD_EXPORT
 size_t
 fread(void* ptr, size_t size, size_t nmemb, FILE* stream) {
   QUAPI_CHECK_AND_REPORT_ENTRY(fread)
-  if(stream == global_runtime.default_stdin || fileno(stream) == STDIN_FILENO)
+  if(stream == global_runtime.default_stdin || fileno(stream) == STDIN_FILENO ||
+     stream == quapi_dev_stdin_mock)
     return read(STDIN_FILENO, ptr, size * nmemb);
   else
     return global_runtime.fread(ptr, size, nmemb, stream);

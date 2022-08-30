@@ -126,6 +126,8 @@ struct gzFile_s {
 
 typedef ssize_t (*read_t)(int, void*, size_t);
 typedef ssize_t (*fread_t)(void*, size_t, size_t, FILE*);
+typedef FILE* (*fopen_t)(const char*, const char*);
+typedef int (*fclose_t)(FILE*);
 typedef int (*getc_t)(FILE*);
 typedef int (*fgetc_t)(FILE*);
 typedef int (*getc_unlocked_t)(FILE*);

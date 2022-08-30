@@ -40,6 +40,8 @@ quapi_preload_state
 quapi_preload_state_func_to_state(quapi_preload_state_func f);
 
 typedef struct quapi_runtime {
+  fopen_t fopen;
+  fclose_t fclose;
   read_t read;
   fread_t fread;
   fgetc_t fgetc;
