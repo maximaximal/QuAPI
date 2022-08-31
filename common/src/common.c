@@ -371,14 +371,9 @@ read_trailing_into_header(quapi_msg* msg,
   }
 #endif
 
-  size_t i = 0;
+  memmove(trail, trail+3, len-3);
 
-  {
-    char padding;
-    READ_VAR(padding);
-    READ_VAR(padding);
-    READ_VAR(padding);
-  }
+  size_t i = 0;
 
   READ_VAR(hdata->literals);
   READ_VAR(hdata->clauses);
