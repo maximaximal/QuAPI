@@ -203,7 +203,7 @@ serialize_header(quapi_msg* msg,
   int32_t prefixdepth = hdata->prefixdepth;
 
   char* data = malloc(sizeof(quapi_msg_data) + sizeof(quapi_msg_type_packed) +
-                      sizeof(int32_t) * 3 + sizeof(int) * 6);
+                      3 + sizeof(int32_t) * 3 + sizeof(int) * 6);
   if(!data)
     return QUAPI_ALLOC_ERROR;
 
