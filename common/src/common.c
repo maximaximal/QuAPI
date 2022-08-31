@@ -213,6 +213,17 @@ serialize_header(quapi_msg* msg,
   data[sizeof(quapi_msg_data)] = msg->msg.type;
   i += sizeof(msg->arr);
 
+  // As a message is 5 bytes wide, we need to add 3 bytes of padding, so that
+  // the stores later are aligned. This is only required in the header.
+  {
+    char padding = 0;
+    WRITE_VAR(padding);
+    WRITE_VAR(padding);
+    WRITE_VAR(padding);
+  }
+
+  assert(i == 8);
+
   WRITE_VAR(litcount);
   WRITE_VAR(clausecount);
   WRITE_VAR(prefixdepth);
@@ -340,7 +351,8 @@ read_trailing_into_header(quapi_msg* msg,
                           read_t read,
                           fread_t fread_func,
                           ZEROCOPY_PIPE_OR_FILE* f) {
-  const size_t len = sizeof(int32_t) * 3 + sizeof(int) * 6;
+  // The 3 is the padding after a header message.
+  const size_t len = 3 + sizeof(int32_t) * 3 + sizeof(int) * 6;
 
 #ifdef USING_ZEROCOPY
   char trail_backing[len];
@@ -360,6 +372,13 @@ read_trailing_into_header(quapi_msg* msg,
 #endif
 
   size_t i = 0;
+
+  {
+    char padding;
+    READ_VAR(padding);
+    READ_VAR(padding);
+    READ_VAR(padding);
+  }
 
   READ_VAR(hdata->literals);
   READ_VAR(hdata->clauses);

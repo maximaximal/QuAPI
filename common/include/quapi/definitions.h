@@ -30,7 +30,7 @@ extern "C" {
 /// The API version may increase with time and is sent with the header message.
 /// The runtime then may switch to other processing strategies if older API
 /// versions were received.
-#define QUAPI_API_VERSION 2
+#define QUAPI_API_VERSION 3
 
 typedef enum quapi_state {
   QUAPI_INPUT,
