@@ -14,7 +14,7 @@ TEST_CASE("bash read line as solver", "[.]") {
   const char* argv[] = {
     "bash",
     "-c",
-    "while read line; do echo \"$line\" >&2; done < \"${1:-/dev/stdin}\"",
+    "while IFS='$\n' read -r line; do echo \"$line\" >&2; done",
     NULL
   };
 

@@ -136,6 +136,10 @@ typedef struct gzFile_s* (*gzdopen_t)(int fd, const char* mode);
 typedef int (*gzread_t)(struct gzFile_s*, char* buf, unsigned int len);
 typedef int (*gzclose_t)(struct gzFile_s*);
 
+/** @brief Function signature for stdout parsing.
+ */
+typedef int (*quapi_stdout_cb)(const char*, void* userdata);
+
 #ifdef __cplusplus
 }
 #include <iostream>

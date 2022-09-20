@@ -7,6 +7,7 @@ set(TEST_SRCS
     test_caqe.cpp
     test_abort.cpp
     test_supplied_solver.cpp
+    test_stdout_cb.cpp
 
     util.cpp
 )

@@ -64,16 +64,17 @@ typedef struct quapi_solver {
   int32_t written_quantifier_literals;
 
   pid_t solverchild_pid;
+  quapi_stdout_cb stdout_cb;
+  void* stdout_cb_userdata;
 
-#ifndef WITHOUT_PCRE2
   struct pollfd out_pollfds[3];
 
+#ifndef WITHOUT_PCRE2
   pcre2_code* re_SAT;
   pcre2_match_data* re_SAT_match_data;
   pcre2_code* re_UNSAT;
   pcre2_match_data* re_UNSAT_match_data;
 #else
-  struct pollfd out_pollfds[2];
 #endif
 } quapi_solver;
 
@@ -386,6 +387,8 @@ quapi_init(const char* path,
   s->config.header.prefixdepth = maxassumptions;
   s->write_pipe_stream = NULL;
   s->solverchild_write_pipe_stream = NULL;
+  s->stdout_cb = NULL;
+  s->stdout_cb_userdata = NULL;
 
   if(maxassumptions > 0) {
     s->config.header.clauses += maxassumptions;
@@ -488,20 +491,22 @@ quapi_init(const char* path,
     pfd->fd = s->config.header.message_to_parent_pipe[0];
     pfd->events = POLLIN;
   }
-#ifndef WITHOUT_PCRE2
   {
     struct pollfd* pfd = &s->out_pollfds[MYPOLL_SOLVERCHILD];
     pfd->fd = s->config.header.forked_child_write_pipe[0];
 
-    // Only wait for input if there is some regex to match against! Would be
-    // useless otherwise.
+    // Only wait for input if there is some regex to match against or if the
+    // callback was registered! Would be useless otherwise.
+#ifndef WITHOUT_PCRE2
     if(s->re_SAT) {
       pfd->events = POLLIN;
     } else {
-      pfd->events = 0;
-    }
-  }
 #endif
+      pfd->events = 0;
+#ifndef WITHOUT_PCRE2
+    }
+#endif
+  }
 
   quapi_msg header_msg = { .msg.data.header.api_version = QUAPI_API_VERSION,
                            .msg.type = QUAPI_MSG_HEADER };
@@ -813,22 +818,16 @@ static void*
 S_HANDLE_CHILD(S_data* d);
 static void*
 S_HANDLE_EVENTFD(S_data* d);
-#ifndef WITHOUT_PCRE2
 static void*
 S_HANDLE_SOLVERCHILD(S_data* d);
-#endif
 
 typedef void*(S_state)(S_data*);
 
 static void*
 S_POLL(S_data* d) {
-  S_state* actions[] = {
-#ifndef WITHOUT_PCRE2
-    S_HANDLE_SOLVERCHILD,
-#endif
-    S_HANDLE_CHILD,
-    S_HANDLE_EVENTFD
-  };
+  S_state* actions[] = { S_HANDLE_CHILD,
+                         S_HANDLE_EVENTFD,
+                         S_HANDLE_SOLVERCHILD };
   const size_t fds = sizeof(actions) / sizeof(actions[0]);
 
   // Handle events from last call to poll.
@@ -881,11 +880,20 @@ S_HANDLE_CHILD(S_data* d) {
       d->retcode = 0;
       return NULL;
     case QUAPI_MSG_EXIT_CODE:
-      d->retcode = msg.msg.data.exit_code.exit_code;
-      dbg(
-        "Solver child exited with exit code %d, received a message from child.",
-        d->retcode);
-      return NULL;
+      dbg("Solver child exited with exit code %d, received a message from "
+          "child.",
+          msg.msg.data.exit_code.exit_code);
+      if(msg.msg.data.exit_code.exit_code == 0 && d->retcode == 0 &&
+         d->s->stdout_cb) {
+        /* There is some more data! The real exit code will be given by the
+         * callback function. */
+        dbg("There is a callback function for string output set! Proceed "
+            "reading until the callback function gives a return code != 0.");
+        return S_POLL;
+      } else {
+        d->retcode = msg.msg.data.exit_code.exit_code;
+        return NULL;
+      }
     default:
       err("Read unsupported message in S_HANDLE_CHILD: %s!",
           quapi_msg_type_str(msg.msg.type));
@@ -910,7 +918,6 @@ move_next_line_to_front(S_data* d, size_t linelength) {
   d->datalen -= linelength;
 }
 
-#ifndef WITHOUT_PCRE2
 static void*
 S_HANDLE_SOLVERCHILD(S_data* d) {
   size_t lines = read_all_available_into_buffer(
@@ -923,6 +930,7 @@ S_HANDLE_SOLVERCHILD(S_data* d) {
     assert(linelength);
     --lines;
 
+#ifndef WITHOUT_PCRE2
     bool sat =
       match_regex(d->s->re_SAT, d->s->re_SAT_match_data, d->buf, linelength);
     if(sat) {
@@ -936,13 +944,21 @@ S_HANDLE_SOLVERCHILD(S_data* d) {
       d->retcode = 20;
       return NULL;
     }
+#endif
+
+    if(d->s->stdout_cb) {
+      int ret = d->s->stdout_cb(d->buf, d->s->stdout_cb_userdata);
+      if(ret != 0) {
+        d->retcode = ret;
+        return NULL;
+      }
+    }
 
     move_next_line_to_front(d, linelength);
   }
 
   return S_POLL;
 }
-#endif
 
 static void*
 S_HANDLE_EVENTFD(S_data* d) {
@@ -979,13 +995,14 @@ solve_internal(quapi_solver* s) {
 
   s->out_pollfds[0].revents = 0;
   s->out_pollfds[1].revents = 0;
-#ifndef WITHOUT_PCRE2
   s->out_pollfds[2].revents = 0;
-#endif
 
-  S_data d = {
-    .s = s, .buf = NULL, .buflen = 0, .datalen = 0, .active_pfd = NULL
-  };
+  S_data d = { .s = s,
+               .buf = NULL,
+               .buflen = 0,
+               .datalen = 0,
+               .active_pfd = NULL,
+               .retcode = 0 };
   S_state* S = S_POLL;
   while(S)
     S = S(&d);
@@ -1043,4 +1060,16 @@ QUAPI_EXPORT quapi_state
 quapi_get_state(quapi_solver* s) {
   assert(s);
   return s->state;
+}
+
+QUAPI_EXPORT void
+quapi_set_stdout_cb(quapi_solver* s,
+                    quapi_stdout_cb stdout_cb,
+                    void* userdata) {
+  // Set the POLLIN flag, it is required now.
+  struct pollfd* pfd = &s->out_pollfds[MYPOLL_SOLVERCHILD];
+  pfd->events = POLLIN;
+
+  s->stdout_cb = stdout_cb;
+  s->stdout_cb_userdata = userdata;
 }

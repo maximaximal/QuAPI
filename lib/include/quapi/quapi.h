@@ -114,6 +114,24 @@ quapi_reset_assumptions(quapi_solver* solver);
 quapi_state
 quapi_get_state(quapi_solver* solver);
 
+/** @brief Sets a callback function with userdata to process STDOUT.
+ *
+ * Once the callback function returns != 0, STDOUT handling is stopped (similar
+ * to the SAT and UNSAT regex).
+ *
+ * The userdata is given to the callback function without other modification and
+ * can be used to pass arbitrary data. This function works regardlessly of the
+ * PCRE2 library status. When not parsing output, no STDOUT will be read from
+ * the process, in turn not costing extra performance.
+ *
+ * Also look at the "stdout callback function" in tests/test_stdout_cb.cpp for a
+ * usage example.
+ */
+void
+quapi_set_stdout_cb(quapi_solver* solver,
+                    quapi_stdout_cb stdout_cb,
+                    void* userdata);
+
 #ifdef __cplusplus
 }
 #include <memory>

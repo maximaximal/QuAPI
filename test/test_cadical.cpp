@@ -11,7 +11,7 @@ static bool cadical_tests_enabled = true;
 
 TEST_CASE("cadical") {
   const char* spath = "/usr/local/bin/cadical";
-  const char* argv[] = { "cadical", "--quiet", NULL };
+  const char* argv[] = { "--quiet", NULL };
 
   if(!cadical_tests_enabled)
     return;
@@ -67,7 +67,7 @@ TEST_CASE("cadical") {
 
 TEST_CASE("cadical with invalid REGEXes") {
   const char* spath = "/usr/local/bin/cadical";
-  const char* argv[] = { "cadical", "--quiet", NULL };
+  const char* argv[] = { "--quiet", NULL };
 
   if(!cadical_tests_enabled)
     return;
@@ -119,7 +119,7 @@ TEST_CASE("cadical with invalid REGEXes") {
 
 TEST_CASE("cadical without regex and just return code") {
   const char* spath = "/usr/local/bin/cadical";
-  const char* argv[] = { "cadical", "--quiet", NULL };
+  const char* argv[] = { "--quiet", NULL };
 
   if(!cadical_tests_enabled)
     return;
@@ -165,7 +165,7 @@ TEST_CASE("cadical without regex and just return code") {
 
 TEST_CASE("cadical with unfinished assumptions") {
   const char* spath = "/usr/local/bin/cadical";
-  const char* argv[] = { "cadical", "--quiet", NULL };
+  const char* argv[] = { "--quiet", NULL };
 
   if(!cadical_tests_enabled)
     return;

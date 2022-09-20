@@ -220,6 +220,10 @@ __uflow(FILE* file) {
     // Read has ended! Give EOF.
     free(file->_IO_read_base);
     file->_IO_read_base = NULL;
+
+    // Unset the environment, so that spawned processes don't read QuAPI again.
+    unsetenv("LD_PRELOAD");
+
     return EOF;
   }
   file->_IO_read_ptr = file->_IO_read_base;

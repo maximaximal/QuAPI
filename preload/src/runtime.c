@@ -481,7 +481,7 @@ READING_PREFIX(quapi_runtime* r, quapi_msg_inner* msg) {
         return READING_EXISTS;
       } else if(lit < 0) {
         r->outbuf_len =
-          snprintf(r->outbuf, sizeof(r->outbuf_stack), "a %d", lit);
+          snprintf(r->outbuf, sizeof(r->outbuf_stack), "a %d", -lit);
         ++r->quantifier_count;
         return READING_FORALL;
       } else {
